@@ -1,0 +1,26 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{4CA163AD-E06E-4B63-91A9-8C60D2193027}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{86CCD671-96AE-407E-9956-70545D798040}"
+	ProjectSection(SolutionItems) = preProject
+		tests\.gitkeep = tests\.gitkeep
+	EndProjectSection
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Minimal.API", "src\Minimal.API\Minimal.API.csproj", "{074F3D4A-8521-4E59-BB48-0E4F04A1AA98}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{074F3D4A-8521-4E59-BB48-0E4F04A1AA98}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{074F3D4A-8521-4E59-BB48-0E4F04A1AA98}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{074F3D4A-8521-4E59-BB48-0E4F04A1AA98}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{074F3D4A-8521-4E59-BB48-0E4F04A1AA98}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{074F3D4A-8521-4E59-BB48-0E4F04A1AA98} = {4CA163AD-E06E-4B63-91A9-8C60D2193027}
+	EndGlobalSection
+EndGlobal

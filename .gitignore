@@ -1,0 +1,13 @@
+# Build
+bin/
+obj/
+*.user
+*.suo
+
+# Rider
+.idea/
+*.DotSettings.user
+
+# Others
+.env
+*.log
