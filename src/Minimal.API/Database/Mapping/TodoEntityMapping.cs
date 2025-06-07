@@ -2,7 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Minimal.API.Models;
 
-namespace Minimal.API.Database;
+namespace Minimal.API.Database.Mapping;
 
 public class TodoEntityMapping : IEntityTypeConfiguration<Todo>
 {

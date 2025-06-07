@@ -1,7 +1,7 @@
 using System.Text;
 using Microsoft.IdentityModel.Tokens;
 
-namespace Minimal.API.Auth;
+namespace Minimal.API.Auth.Token;
 
 public class TokenHelpers
 {

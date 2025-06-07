@@ -1,3 +1,3 @@
 namespace Minimal.API.Requests;
 
-public record RefreshTokenRequest(string RefreshToken);
+public record RefreshTokenRequest(string RefreshToken, string Username);

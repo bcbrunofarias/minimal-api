@@ -1,26 +1,28 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using System.Security.Cryptography;
 using System.Text;
 using Microsoft.IdentityModel.Tokens;
+using Minimal.API.Models;
 
-namespace Minimal.API.Auth;
+namespace Minimal.API.Auth.Token;
 
 public class TokenService(IConfiguration configuration) : IToken
 {
     private readonly IConfiguration _jwtSettings = configuration.GetSection("JwtSettings");
     
-    public string CreateAccessToken(string username)
+    public string CreateAccessToken(User user)
     {
         var expirationTime = _jwtSettings.GetValue<int>("ExpirationTimeInMinutes");
-        var token = TokenSettings(username, expirationTime);
-        return new JwtSecurityTokenHandler().WriteToken(token);
+        return GenerateToken(user, expirationTime);
     }
 
-    public string CreateRefreshToken(string username)
+    public (string, DateTime) CreateRefreshToken(User user)
     {
         var expirationTime = _jwtSettings.GetValue<int>("RefreshExpirationTimeInMinutes");
-        var token = TokenSettings(username, expirationTime);
-        return new JwtSecurityTokenHandler().WriteToken(token);
+        var expiresAt = DateTime.UtcNow.AddMinutes(expirationTime);
+        var token = Convert.ToBase64String(RandomNumberGenerator.GetBytes(64));
+        return (token, expiresAt);
     }
 
     public async Task<TokenValidationResult> ValidateTokenAsync(string token)
@@ -41,23 +43,35 @@ public class TokenService(IConfiguration configuration) : IToken
         var username = tokenValidationResult.Claims.FirstOrDefault(c => c.Key == ClaimTypes.NameIdentifier).Value as string;
         return new TokenValidationResult(true, username);
     }
-
-    private JwtSecurityToken TokenSettings(string username, int expirationTime)
+    
+    private JwtSecurityToken BuildJwt(User user, DateTime expiresAt)
     {
         var secretKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwtSettings.GetValue<string>("SecretKey") ?? string.Empty));
-        var claims = new List<Claim>([
-            new Claim(JwtRegisteredClaimNames.Sub, username),
-            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
-        ]);
+
+        var claims = new List<Claim>
+        {
+            new(JwtRegisteredClaimNames.Sub, user.Name),
+            new(JwtRegisteredClaimNames.Email, user.Email),
+            new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+        };
         
-        return new JwtSecurityToken
-        (
+        claims.AddRange(user.UserRoles.Select(r => new Claim(ClaimTypes.Role, r.Role.Name)));
+        claims.AddRange(user.UserClaims.Select(c => new Claim(c.Type, c.Value)));
+
+        return new JwtSecurityToken(
             issuer: _jwtSettings.GetValue<string>("Issuer"),
             audience: _jwtSettings.GetValue<string>("Audience"),
             claims: claims,
-            expires: DateTime.UtcNow.AddMinutes(expirationTime),
             notBefore: DateTime.UtcNow,
+            expires: expiresAt,
             signingCredentials: new SigningCredentials(secretKey, SecurityAlgorithms.HmacSha256)
         );
+    }
+    
+    private string GenerateToken(User user, int expirationInMinutes)
+    {
+        var expiresAt = DateTime.UtcNow.AddMinutes(expirationInMinutes);
+        var jwtSecurityToken = BuildJwt(user, expiresAt);
+        return new JwtSecurityTokenHandler().WriteToken(jwtSecurityToken);
     }
 }

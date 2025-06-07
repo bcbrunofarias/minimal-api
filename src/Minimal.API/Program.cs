@@ -1,27 +1,21 @@
+using System.Security.Claims;
 using System.Text.Json.Serialization;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
-using Minimal.API.Auth;
+using Minimal.API.Auth.Password;
+using Minimal.API.Auth.Token;
 using Minimal.API.Enums;
 using Minimal.API.Models;
 using Minimal.API.Requests;
-using Minimal.API.Database;
+using Minimal.API.Database.EF;
+using Minimal.API.Extensions;
 using Minimal.API.Responses;
 using LoginRequest = Minimal.API.Requests.LoginRequest;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddAuthentication(options =>
-{
-    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
-    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
-}).AddJwtBearer(options => {
-    var configuration = builder.Configuration;
-    options.TokenValidationParameters = TokenHelpers.GetTokenValidationParameters(configuration);
-});
-
-builder.Services.AddSingleton<IToken, TokenService>();
-builder.Services.AddDbContext<AppDbContext>(options => options.UseInMemoryDatabase("TodosDb"));
+builder.ConfigureDi();
+builder.ConfigureAuthentication();
+builder.ConfigureAuthorization();
 builder.Services.AddOpenApi();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.ConfigureHttpJsonOptions(options =>
@@ -29,47 +23,96 @@ builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.Converters.Add(new JsonStringEnumConverter());
 });
 
-builder.Services.AddAuthentication();
-builder.Services.AddAuthorization();
-
 var app = builder.Build();
-if (app.Environment.IsDevelopment())
-{
-    app.MapOpenApi();
-}
+
+app.ConfigureDevelopmentEnv();
 
 app.MapGet("/health", () => "Healthy");
 
-app.MapPost("/login", (IToken tokenService, LoginRequest request) =>
+app.MapGet("/auth/me", (AppDbContext context, ClaimsPrincipal authenticatedUser) =>
 {
-    if (!request.Username.Equals("ADMIN", StringComparison.InvariantCultureIgnoreCase) || request.Password != "123")
+    var userEmail = authenticatedUser.FindFirst(ClaimTypes.Email)?.Value;
+    if (string.IsNullOrWhiteSpace(userEmail))
     {
         return Results.Unauthorized();
     }
     
-    var accessToken = tokenService.CreateAccessToken(request.Username);
-    var refreshToken = tokenService.CreateRefreshToken(request.Username);
+    var user = context.Users
+        .Include(user => user.UserRoles)
+        .ThenInclude(ur => ur.Role)
+        .Include(user => user.UserClaims)
+        .FirstOrDefault(user => user.Email.Equals(userEmail));
+
+    if (user is null)
+    {
+        return Results.NotFound();
+    }    
+        
+    var roles = user.UserRoles.Select(userRole => userRole.Role.Name).ToList();
+    var claims = user.UserClaims.Select(userClaims => new GetMeClaimResponse(userClaims.Type, userClaims.Value)).ToList();
     
-    return Results.Ok(new LoginResponse(accessToken, refreshToken));
+    return Results.Ok(new GetMeResponse(user.Name, user.Email, roles, claims));
+}).RequireAuthorization();
+
+app.MapPost("/auth/login", (AppDbContext dbContext, IToken tokenService, IPasswordService passwordService, LoginRequest request) =>
+{
+    var user = dbContext.Users
+        .Include(user => user.UserRoles)
+        .ThenInclude(user => user.Role)
+        .Include(user => user.UserClaims)
+        .FirstOrDefault(user => user.Email.Equals(request.Username));
+   
+    if (user is null || !passwordService.IsPasswordSuccessfulVerified(user.PasswordHash, request.Password))
+    {
+        return Results.Unauthorized();
+    }
+    
+    var accessTokenAsString = tokenService.CreateAccessToken(user);
+    var (refreshTokenAsString, newRefreshTokenExpiresDate) = tokenService.CreateRefreshToken(user);
+    var refreshToken = RefreshToken.Create(refreshTokenAsString, user.Email, newRefreshTokenExpiresDate);
+    
+    dbContext.RefreshTokens.Add(refreshToken);
+    dbContext.SaveChanges();
+    
+    return Results.Ok(new LoginResponse(accessTokenAsString, refreshTokenAsString));
 });
 
-app.MapPost("/refresh-token", async (IToken tokenService, RefreshTokenRequest request) =>
+app.MapPost("/auth/refresh-token", (AppDbContext dbContext, IToken tokenService, RefreshTokenRequest request) =>
 {
     if (string.IsNullOrWhiteSpace(request.RefreshToken))
     {
         return Results.BadRequest();
     }
     
-    var tokenValidationResult = await tokenService.ValidateTokenAsync(request.RefreshToken);
-    if (!tokenValidationResult.IsValid || string.IsNullOrWhiteSpace(tokenValidationResult.Username))
+    var existingRefreshToken = dbContext.RefreshTokens.FirstOrDefault(refreshToken => 
+        refreshToken.Token == request.RefreshToken && 
+        refreshToken.Username == request.Username);
+
+    if (existingRefreshToken is null || existingRefreshToken.IsRevoked || existingRefreshToken.IsExpired())
+    {
+        return Results.Unauthorized();
+    }
+
+    var user = dbContext.Users
+        .Include(user => user.UserRoles)
+        .ThenInclude(user => user.Role)
+        .FirstOrDefault(user => user.Email == request.Username);
+
+    if (user is null)
     {
         return Results.Unauthorized();
     }
     
-    var accessToken = tokenService.CreateAccessToken(tokenValidationResult.Username);
-    var refreshToken = tokenService.CreateRefreshToken(tokenValidationResult.Username);
+    var newAccessTokenAsString = tokenService.CreateAccessToken(user);
+    var (newRefreshTokenAsString, newRefreshTokenExpiresDate) = tokenService.CreateRefreshToken(user);
     
-    return Results.Ok(new RefreshTokenResponse(accessToken, refreshToken));
+    existingRefreshToken.Revoke(newRefreshTokenAsString);
+    
+    var newRefreshToken = RefreshToken.Create(newRefreshTokenAsString, user.Email, newRefreshTokenExpiresDate);
+    dbContext.RefreshTokens.Add(newRefreshToken);
+    dbContext.SaveChanges();
+    
+    return Results.Ok(new RefreshTokenResponse(newAccessTokenAsString, newRefreshTokenAsString));
 });
 
 app.MapGet("/todos", async (AppDbContext dbContext) =>
@@ -143,7 +186,7 @@ app.MapDelete("/todos/{id:guid}", async (Guid id, AppDbContext dbContext) =>
     dbContext.SaveChanges();
     
     return Results.NoContent();
-}).RequireAuthorization();
+}).RequireAuthorization(nameof(TodoPolicies.CanDelete));
 
 app.UseAuthentication();
 app.UseAuthorization();
